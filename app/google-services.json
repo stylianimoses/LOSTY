@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1035581628256",
+    "project_id": "losty-af744",
+    "storage_bucket": "losty-af744.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1035581628256:android:ec3fc5d624170feceec805",
+        "android_client_info": {
+          "package_name": "com.fyp.losty"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDOgizNtvyZqyj_Q5-PFVAOiurwhZ7NfAY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
