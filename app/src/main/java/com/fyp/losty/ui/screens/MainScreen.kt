@@ -42,7 +42,7 @@ fun MainScreen(appNavController: NavController) {
                 val navBackStackEntry by navController.currentBackStackEntryAsState()
                 val currentDestination = navBackStackEntry?.destination
                 NavigationBarItem(
-                    icon = { Icon(Icons.Filled.Home, contentDescription = "Posts Feed") },
+                    icon = { Icon(Icons.Filled.Search, contentDescription = "Posts Feed") },
                     label = { Text("Feed") },
                     selected = currentDestination?.hierarchy?.any { it.route == "posts_feed" } == true,
                     onClick = { navController.navigate("posts_feed") { popUpTo(navController.graph.findStartDestination().id) { saveState = true }; launchSingleTop = true; restoreState = true } }
@@ -60,7 +60,7 @@ fun MainScreen(appNavController: NavController) {
                     onClick = { navController.navigate("manage_own_posts") { popUpTo(navController.graph.findStartDestination().id) { saveState = true }; launchSingleTop = true; restoreState = true } }
                 )
                 NavigationBarItem(
-                    icon = { Icon(Icons.Filled.Settings, contentDescription = "Manage Active Claims") },
+                    icon = { Icon(Icons.Filled.Notifications, contentDescription = "Manage Active Claims") },
                     label = { Text("Claims") },
                     selected = currentDestination?.hierarchy?.any { it.route == "manage_active_claims" } == true,
                     onClick = { navController.navigate("manage_active_claims") { popUpTo(navController.graph.findStartDestination().id) { saveState = true }; launchSingleTop = true; restoreState = true } }
