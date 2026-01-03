@@ -36,7 +36,7 @@ fun MainScreen(appNavController: NavController) {
             )
         },
         bottomBar = {
-            BottomAppBar {
+            NavigationBar {
                 val navBackStackEntry by navController.currentBackStackEntryAsState()
                 val currentDestination = navBackStackEntry?.destination
                 NavigationBarItem(
