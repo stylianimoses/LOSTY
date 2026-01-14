@@ -38,7 +38,6 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.text.font.FontWeight
 import com.fyp.losty.R
 import com.fyp.losty.ui.theme.*
-import kotlinx.coroutines.launch
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.IconButton
@@ -86,7 +85,7 @@ fun CreatePostScreen(navController: NavController, appViewModel: AppViewModel = 
     Scaffold(
         topBar = {
             CenterAlignedTopAppBar(
-                title = { Text("New Post", fontWeight = FontWeight.Bold, color = TextGrey) },
+                title = { Text("New Post", fontWeight = FontWeight.Bold, color = Color.Black) },
                 // Use an IconButton (arrow) as the back/cancel control and navigate safely
                 navigationIcon = {
                     IconButton(onClick = {
@@ -101,7 +100,7 @@ fun CreatePostScreen(navController: NavController, appViewModel: AppViewModel = 
                             }
                         } catch (_: Exception) { /* ignore to prevent crashes */ }
                     }) {
-                        Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Cancel", tint = TextGrey)
+                        Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Cancel", tint = Color.Black)
                     }
                 },
                 actions = {

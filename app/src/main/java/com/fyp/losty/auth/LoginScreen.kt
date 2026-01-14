@@ -1,15 +1,10 @@
 package com.fyp.losty.auth
 
-import android.app.Activity
-import android.content.ActivityNotFoundException
 import android.content.Context
-import android.content.Intent
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.util.Patterns
 import android.widget.Toast
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -35,13 +30,20 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.credentials.CredentialManager
+import androidx.credentials.CustomCredential
+import androidx.credentials.GetCredentialRequest
+import androidx.credentials.exceptions.GetCredentialException
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import androidx.navigation.compose.rememberNavController
+import com.fyp.losty.AppViewModel
+import com.fyp.losty.AuthState
 import com.fyp.losty.R
-import com.google.android.gms.auth.api.signin.GoogleSignIn
-import com.google.android.gms.auth.api.signin.GoogleSignInClient
-import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+import com.google.android.libraries.identity.googleid.GetGoogleIdOption
+import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
+import com.google.android.libraries.identity.googleid.GoogleIdTokenParsingException
+import kotlinx.coroutines.launch
 
 private val PrimaryBlue = Color(0xFF349BEB) // requested exact blue
 private val DisabledGray = Color(0xFFDCE9F8)
@@ -56,47 +58,23 @@ fun isNetworkAvailable(context: Context): Boolean {
 }
 
 @Composable
-fun LoginScreen(navController: NavController, authViewModel: AuthViewModel = viewModel()) {
+fun LoginScreen(navController: NavController, appViewModel: AppViewModel = viewModel()) {
     var credential by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
     var showResetDialog by remember { mutableStateOf(false) }
     var resetEmail by remember { mutableStateOf("") }
 
-    val authState by authViewModel.authState.collectAsState()
+    val authState by appViewModel.authState.collectAsState()
     val context = LocalContext.current
-    val activity = (LocalContext.current as? Activity)
-
-    // Configure GoogleSignIn client using the web client id in strings.xml
-    val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
-        .requestIdToken(LocalContext.current.getString(R.string.default_web_client_id))
-        .requestEmail()
-        .build()
-
-    val googleClient: GoogleSignInClient? = activity?.let { GoogleSignIn.getClient(it, gso) }
-
-    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            try {
-                val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
-                val account = task.getResult(Exception::class.java)
-                val idToken = account?.idToken
-                if (!idToken.isNullOrEmpty()) {
-                    authViewModel.signInWithGoogle(idToken)
-                } else {
-                    Toast.makeText(context, "Google Sign-In failed (no token)", Toast.LENGTH_SHORT).show()
-                }
-            } catch (e: Exception) {
-                Toast.makeText(context, "Google Sign-In error: ${e.message}", Toast.LENGTH_LONG).show()
-            }
-        }
-    }
+    val coroutineScope = rememberCoroutineScope()
+    val credentialManager = remember { CredentialManager.create(context) }
 
     LaunchedEffect(authState) {
         when (val state = authState) {
             is AuthState.Success -> {
-                navController.navigate("main") {
-                    popUpTo(navController.graph.startDestinationId) { inclusive = true }
+                navController.navigate("main_graph") {
+                    popUpTo("auth_graph") { inclusive = true }
                     launchSingleTop = true
                 }
             }
@@ -106,8 +84,8 @@ fun LoginScreen(navController: NavController, authViewModel: AuthViewModel = vie
     }
 
     val isEmail = Patterns.EMAIL_ADDRESS.matcher(credential).matches()
-    val isPhone = Patterns.PHONE.matcher(credential).matches() && credential.length >= 10
-    val isCredentialValid = isEmail || isPhone
+    val isUsername = credential.isNotBlank() && !isEmail
+    val isCredentialValid = isEmail || isUsername
     val isPasswordValid = password.length >= 8
     val isFormComplete = isCredentialValid && isPasswordValid
 
@@ -147,21 +125,73 @@ fun LoginScreen(navController: NavController, authViewModel: AuthViewModel = vie
                             .fillMaxWidth()
                             .height(48.dp)
                             .testTag("google_button")
-                            .clickable(enabled = isNetworkAvailable(context) && authState !is AuthState.Loading) {
-                                if (!isNetworkAvailable(context)) {
-                                    Toast.makeText(context, "No network connection. Please connect to the internet and try again.", Toast.LENGTH_SHORT).show()
-                                } else {
+                            .clickable(enabled = authState !is AuthState.Loading) {
+                                coroutineScope.launch {
+                                    if (!isNetworkAvailable(context)) {
+                                        Toast
+                                            .makeText(
+                                                context,
+                                                "No network connection. Please connect to the internet and try again.",
+                                                Toast.LENGTH_SHORT
+                                            )
+                                            .show()
+                                        return@launch
+                                    }
+
                                     try {
-                                        val intent = googleClient?.signInIntent
-                                        if (intent != null) {
-                                            launcher.launch(intent)
+                                        val googleIdOption = GetGoogleIdOption.Builder()
+                                            .setFilterByAuthorizedAccounts(false)
+                                            .setServerClientId(context.getString(R.string.default_web_client_id))
+                                            .setAutoSelectEnabled(true)
+                                            .build()
+
+                                        val request = GetCredentialRequest
+                                            .Builder()
+                                            .addCredentialOption(googleIdOption)
+                                            .build()
+
+                                        val result = credentialManager.getCredential(context, request)
+                                        val credential = result.credential
+
+                                        if (credential is CustomCredential && credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+                                            try {
+                                                val googleIdToken =
+                                                    GoogleIdTokenCredential.createFrom(credential.data)
+                                                appViewModel.signInWithGoogle(googleIdToken.idToken)
+                                            } catch (e: GoogleIdTokenParsingException) {
+                                                Toast
+                                                    .makeText(
+                                                        context,
+                                                        "Google Sign-In failed: Could not parse token",
+                                                        Toast.LENGTH_LONG
+                                                    )
+                                                    .show()
+                                            }
                                         } else {
-                                            Toast.makeText(context, "Google Sign-In is not configured on this device.", Toast.LENGTH_SHORT).show()
+                                            Toast
+                                                .makeText(
+                                                    context,
+                                                    "Google Sign-In failed: Unexpected credential type.",
+                                                    Toast.LENGTH_SHORT
+                                                )
+                                                .show()
                                         }
-                                    } catch (ex: ActivityNotFoundException) {
-                                        Toast.makeText(context, "Unable to open Google Sign-In. Please ensure Google Play Services is available.", Toast.LENGTH_LONG).show()
-                                    } catch (ex: Exception) {
-                                        Toast.makeText(context, "Google Sign-In failed: ${'$'}{ex.message}", Toast.LENGTH_LONG).show()
+                                    } catch (e: GetCredentialException) {
+                                        Toast
+                                            .makeText(
+                                                context,
+                                                "Google Sign-In error: ${e.message ?: "Unknown error"}",
+                                                Toast.LENGTH_LONG
+                                            )
+                                            .show()
+                                    } catch (e: Exception) {
+                                        Toast
+                                            .makeText(
+                                                context,
+                                                "An unexpected error occurred: ${e.message}",
+                                                Toast.LENGTH_LONG
+                                            )
+                                            .show()
                                     }
                                 }
                             }
@@ -192,7 +222,7 @@ fun LoginScreen(navController: NavController, authViewModel: AuthViewModel = vie
                     OutlinedTextField(
                         value = credential,
                         onValueChange = { credential = it },
-                        placeholder = { Text("phone number, username, or email") },
+                        placeholder = { Text("Email or Username") },
                         singleLine = true,
                         modifier = Modifier
                             .fillMaxWidth()
@@ -206,7 +236,7 @@ fun LoginScreen(navController: NavController, authViewModel: AuthViewModel = vie
                     OutlinedTextField(
                         value = password,
                         onValueChange = { password = it },
-                        placeholder = { Text("password") },
+                        placeholder = { Text("Password") },
                         singleLine = true,
                         modifier = Modifier
                             .fillMaxWidth()
@@ -231,7 +261,7 @@ fun LoginScreen(navController: NavController, authViewModel: AuthViewModel = vie
                     Button(
                         onClick = {
                             if (!isNetworkAvailable(context)) Toast.makeText(context, "No network connection", Toast.LENGTH_SHORT).show()
-                            else authViewModel.loginUser(credential, password)
+                            else appViewModel.loginUser(credential, password)
                         },
                         enabled = isFormComplete && authState !is AuthState.Loading,
                         modifier = Modifier
@@ -246,9 +276,15 @@ fun LoginScreen(navController: NavController, authViewModel: AuthViewModel = vie
                 }
 
                 // Bottom area: sign up link
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-                    Text(text = "Don't have an account? ")
-                    Text(text = "sign up", color = MaterialTheme.colorScheme.primary, modifier = Modifier.clickable { navController.navigate("register") })
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Don\'t have an account? ")
+                    TextButton(onClick = { navController.navigate("register") }) {
+                        Text("Sign Up")
+                    }
                 }
             }
         }
@@ -265,7 +301,7 @@ fun LoginScreen(navController: NavController, authViewModel: AuthViewModel = vie
                     }
                 },
                 confirmButton = {
-                    TextButton(onClick = { authViewModel.sendPasswordReset(resetEmail); showResetDialog = false }) { Text("Send") }
+                    TextButton(onClick = { appViewModel.sendPasswordReset(resetEmail); showResetDialog = false }) { Text("Send") }
                 },
                 dismissButton = {
                     TextButton(onClick = { showResetDialog = false }) { Text("Cancel") }

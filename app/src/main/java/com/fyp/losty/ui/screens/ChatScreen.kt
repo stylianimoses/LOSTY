@@ -8,10 +8,13 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material.ExperimentalMaterialApi
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.pullrefresh.PullRefreshIndicator
+import androidx.compose.material.pullrefresh.pullRefresh
+import androidx.compose.material.pullrefresh.rememberPullRefreshState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -19,74 +22,82 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
-import coil.compose.AsyncImage
 import com.fyp.losty.AppViewModel
-import com.fyp.losty.Conversation
+import com.fyp.losty.ConversationsState
 import com.fyp.losty.Message
 import com.fyp.losty.MessagesState
-import com.fyp.losty.ConversationsState
+import com.fyp.losty.R
 import com.fyp.losty.ui.components.BackToHomeButton
-import com.fyp.losty.ui.theme.*
+import com.fyp.losty.ui.theme.ElectricPink
+import com.fyp.losty.ui.theme.OffWhite
+import com.fyp.losty.ui.theme.TextBlack
+import com.fyp.losty.ui.theme.TextGrey
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
-import androidx.compose.material.pullrefresh.pullRefresh
-import androidx.compose.material.pullrefresh.rememberPullRefreshState
-import androidx.compose.material.pullrefresh.PullRefreshIndicator
 
-@OptIn(ExperimentalMaterial3Api::class, androidx.compose.material.ExperimentalMaterialApi::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterialApi::class)
 @Composable
 fun ChatScreen(
     conversationId: String,
     navController: NavController,
-    appViewModel: AppViewModel = viewModel()
+    appViewModel: AppViewModel = viewModel(),
+    otherUserNameArg: String? = null
 ) {
     val messagesState by appViewModel.messagesState.collectAsState()
     val conversationsState by appViewModel.conversationsState.collectAsState()
     val userProfile by appViewModel.userProfile.collectAsState()
     val currentUserId = userProfile.uid
 
-    // --- NEW FUNCTION: Identify Other User for Header ---
+    var isRefreshing by remember { mutableStateOf(false) } // Local refreshing state
+
     val conversation = (conversationsState as? ConversationsState.Success)?.conversations?.find { it.id == conversationId }
-    val otherUserName = when {
-        conversation == null -> "Chat"
+    val resolvedOtherName = otherUserNameArg ?: when {
+        conversation == null -> "User"
         conversation.participant1Id == currentUserId -> conversation.participant2Name
         else -> conversation.participant1Name
     }
-    // Placeholder for avatar logic
-    val otherUserPhotoUrl: String? = null
 
     var messageText by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
+    val coroutineScope = rememberCoroutineScope()
+
+    fun refresh() = coroutineScope.launch {
+        isRefreshing = true
+        appViewModel.loadMessages(conversationId, isRefresh = true)
+        isRefreshing = false
+    }
+
+    val pullRefreshState = rememberPullRefreshState(refreshing = isRefreshing, onRefresh = ::refresh)
 
     LaunchedEffect(conversationId) {
-        appViewModel.loadMessagesOnce(conversationId)
+        appViewModel.loadMessages(conversationId)
     }
 
     LaunchedEffect(messagesState) {
         if (messagesState is MessagesState.Success) {
             val messages = (messagesState as MessagesState.Success).messages
             if (messages.isNotEmpty()) {
-                listState.animateScrollToItem(messages.size - 1)
+                coroutineScope.launch {
+                    listState.animateScrollToItem(messages.size - 1)
+                }
             }
         }
     }
 
-    // Add pull-to-refresh state
-    val isRefreshing = messagesState is MessagesState.Loading
-    val pullRefreshState = rememberPullRefreshState(isRefreshing, onRefresh = { appViewModel.loadMessagesOnce(conversationId) })
+    var optionsExpanded by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
-            CenterAlignedTopAppBar(
-                // --- MODIFIED: Header now shows Avatar + Name ---
+            TopAppBar(
+                navigationIcon = { BackToHomeButton(navController = navController) },
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Surface(
@@ -94,26 +105,44 @@ fun ChatScreen(
                             shape = CircleShape,
                             color = Color(0xFFE0E0E0)
                         ) {
-                            if (otherUserPhotoUrl != null) {
-                                AsyncImage(model = otherUserPhotoUrl, contentDescription = null, contentScale = ContentScale.Crop)
-                            } else {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Text(otherUserName.take(1).uppercase(), color = TextGrey, fontWeight = FontWeight.Bold)
-                                }
+                            Box(contentAlignment = Alignment.Center) {
+                                Text(resolvedOtherName.take(1).uppercase(), color = TextGrey, fontWeight = FontWeight.Bold)
                             }
                         }
                         Spacer(modifier = Modifier.width(12.dp))
                         Column {
-                            Text(text = otherUserName, fontWeight = FontWeight.Bold, fontSize = 16.sp, color = TextBlack)
-                            // Added "Active" status in Pink
-                            Text(text = "Active now", fontSize = 12.sp, color = ElectricPink)
+                            Text(text = resolvedOtherName, fontWeight = FontWeight.Bold, fontSize = 16.sp, color = TextBlack)
+                            // TODO: Add user status here (e.g., "online")
                         }
                     }
                 },
-                navigationIcon = { BackToHomeButton(navController = navController) },
                 actions = {
-                    IconButton(onClick = { /* Options */ }) {
-                        Icon(Icons.Default.MoreVert, contentDescription = "Options", tint = TextBlack)
+                    Box {
+                        IconButton(onClick = { optionsExpanded = true }) {
+                            Icon(Icons.Default.MoreVert, contentDescription = "Options", tint = TextBlack)
+                        }
+                        DropdownMenu(
+                            expanded = optionsExpanded,
+                            onDismissRequest = { optionsExpanded = false }
+                        ) {
+                            DropdownMenuItem(
+                                text = {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            painter = painterResource(id = R.drawable.outline_person_alert_24),
+                                            contentDescription = "Report",
+                                            tint = TextBlack
+                                        )
+                                        Spacer(modifier = Modifier.width(12.dp))
+                                        Text("Report User")
+                                    }
+                                },
+                                onClick = {
+                                    optionsExpanded = false
+                                    // TODO: Implement Report flow
+                                }
+                            )
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = OffWhite)
@@ -121,30 +150,34 @@ fun ChatScreen(
         },
         containerColor = OffWhite,
         bottomBar = {
-            // --- NEW FUNCTION: Pill-Shaped Input Bar ---
             ChatInputBar(
                 messageText = messageText,
                 onMessageChange = { messageText = it },
                 onSendClick = {
-                    appViewModel.sendMessage(conversationId, messageText.trim())
-                    messageText = ""
+                    if (messageText.isNotBlank()) {
+                        appViewModel.sendMessage(conversationId, messageText.trim())
+                        messageText = ""
+                    }
                 }
             )
         }
     ) { paddingValues ->
         Box(
             modifier = Modifier
-                .fillMaxSize()
                 .padding(paddingValues)
                 .pullRefresh(pullRefreshState)
         ) {
             when (val state = messagesState) {
-                is MessagesState.Loading -> CircularProgressIndicator(modifier = Modifier.align(Alignment.Center), color = ElectricPink)
+                is MessagesState.Loading -> {
+                    if (!isRefreshing) {
+                        CircularProgressIndicator(modifier = Modifier.align(Alignment.Center), color = ElectricPink)
+                    }
+                }
                 is MessagesState.Success -> {
                     LazyColumn(
                         state = listState,
                         contentPadding = PaddingValues(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(16.dp), // Increased spacing
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
                         modifier = Modifier.fillMaxSize()
                     ) {
                         items(state.messages) { message ->
@@ -157,12 +190,10 @@ fun ChatScreen(
                 }
                 is MessagesState.Error -> Text("Error: ${state.message}", modifier = Modifier.align(Alignment.Center), color = Color.Red)
             }
-
             PullRefreshIndicator(
-                isRefreshing,
-                pullRefreshState,
-                Modifier.align(Alignment.TopCenter),
-                backgroundColor = Color.White,
+                refreshing = isRefreshing,
+                state = pullRefreshState,
+                modifier = Modifier.align(Alignment.TopCenter),
                 contentColor = ElectricPink
             )
         }
@@ -186,7 +217,6 @@ fun ChatInputBar(
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Pill Shape Input
             BasicTextField(
                 value = messageText,
                 onValueChange = onMessageChange,
@@ -195,7 +225,7 @@ fun ChatInputBar(
                     .background(Color(0xFFF5F5F5), RoundedCornerShape(24.dp))
                     .padding(horizontal = 16.dp, vertical = 12.dp),
                 textStyle = TextStyle(fontSize = 16.sp, color = TextBlack),
-                cursorBrush = SolidColor(ElectricPink), // Maintained Brand Color
+                cursorBrush = SolidColor(ElectricPink),
                 decorationBox = { innerTextField ->
                     if (messageText.isEmpty()) {
                         Text("Type a message...", color = TextGrey, fontSize = 16.sp)
@@ -206,7 +236,6 @@ fun ChatInputBar(
 
             Spacer(modifier = Modifier.width(12.dp))
 
-            // Round Send Button
             val isSendEnabled = messageText.isNotBlank()
             IconButton(
                 onClick = onSendClick,
@@ -214,7 +243,7 @@ fun ChatInputBar(
                 modifier = Modifier
                     .size(48.dp)
                     .clip(CircleShape)
-                    .background(if (isSendEnabled) ElectricPink else Color.LightGray) // Brand Color
+                    .background(if (isSendEnabled) ElectricPink else Color.LightGray)
             ) {
                 Icon(
                     Icons.AutoMirrored.Filled.Send,
@@ -229,11 +258,9 @@ fun ChatInputBar(
 
 @Composable
 fun MessageBubble(message: Message, isCurrentUser: Boolean) {
-    // Maintained Original Theme Colors (Pink/Grey) instead of Blue
     val bubbleColor = if (isCurrentUser) ElectricPink else Color(0xFFE0E0E0)
     val textColor = if (isCurrentUser) Color.White else TextBlack
 
-    // --- NEW FUNCTION: Tail Shapes ---
     val bubbleShape = if (isCurrentUser) {
         RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomStart = 18.dp, bottomEnd = 2.dp)
     } else {
@@ -245,7 +272,6 @@ fun MessageBubble(message: Message, isCurrentUser: Boolean) {
         horizontalArrangement = if (isCurrentUser) Arrangement.End else Arrangement.Start,
         verticalAlignment = Alignment.Bottom
     ) {
-        // Bubble
         Surface(
             color = bubbleColor,
             shape = bubbleShape,
@@ -261,7 +287,6 @@ fun MessageBubble(message: Message, isCurrentUser: Boolean) {
             }
         }
 
-        // Time Stamp outside
         Spacer(modifier = Modifier.width(4.dp))
         Text(
             text = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(message.timestamp)),

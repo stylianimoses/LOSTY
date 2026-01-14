@@ -7,6 +7,11 @@
         <domain includeSubdomains="true">127.0.0.1</domain>
     </domain-config>
 
+    <!-- Allow connections to Firebase services -->
+    <domain-config>
+        <domain includeSubdomains="true">googleapis.com</domain>
+    </domain-config>
+
     <!-- Default allow for debug builds can be configured via manifest or BuildConfig; keep conservative default -->
     <base-config cleartextTrafficPermitted="false" />
 </network-security-config>

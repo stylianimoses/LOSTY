@@ -51,12 +51,17 @@ fun EditPostScreen(postId: String?, navController: NavController, appViewModel: 
             is SinglePostState.Error -> {
                 Toast.makeText(context, state.message, Toast.LENGTH_LONG).show()
             }
-            else -> Unit
+            is SinglePostState.Idle -> {
+                // Show a loading indicator while the post is being fetched
+            }
+            is SinglePostState.Loading -> {
+                // Show a loading indicator while the post is being updated
+            }
         }
     }
 
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        if (postState is SinglePostState.Loading) {
+        if (postState is SinglePostState.Loading || postState is SinglePostState.Idle) {
             CircularProgressIndicator()
         }
         else {

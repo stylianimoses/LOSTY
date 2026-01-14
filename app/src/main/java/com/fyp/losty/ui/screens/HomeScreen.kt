@@ -1,79 +1,68 @@
 package com.fyp.losty.ui.screens
 
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateDpAsState
+import android.widget.Toast
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.ExperimentalMaterialApi
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.BookmarkBorder
-import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Notifications
-import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.automirrored.filled.Chat
-import androidx.compose.material3.Card
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
-import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.pullrefresh.PullRefreshIndicator
+import androidx.compose.material.pullrefresh.pullRefresh
+import androidx.compose.material.pullrefresh.rememberPullRefreshState
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import com.fyp.losty.ui.theme.*
-import android.widget.Toast
-import androidx.compose.ui.unit.dp
-import coil.compose.AsyncImage
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.lifecycle.viewmodel.compose.viewModel
-import com.fyp.losty.AppViewModel
-import com.fyp.losty.ui.components.PullToRefreshBox
-import androidx.navigation.NavController
-import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavController
+import androidx.navigation.compose.currentBackStackEntryAsState
+import coil.compose.AsyncImage
+import com.fyp.losty.AppViewModel
+import com.fyp.losty.ClaimEvent
+import com.fyp.losty.Post
+import com.fyp.losty.PostFeedState
 import com.fyp.losty.R
-import androidx.compose.ui.graphics.vector.ImageVector
+import com.fyp.losty.ui.components.BottomNavigationBar
+import com.fyp.losty.ui.theme.*
 
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterialApi::class)
 @Composable
 fun HomeScreen(navController: NavController, appNavController: NavController) {
-    var selectedTab by remember { mutableStateOf(0) }
+    var selectedTab by remember { mutableIntStateOf(0) }
     val appViewModel: AppViewModel = viewModel()
     val postFeedState by appViewModel.postFeedState.collectAsState()
-    val samplePosts: List<HomePost> = remember {
-        listOf(
-            samplePost(title = "Lost Backpack", username = "alex_j", location = "Downtown Park", postId = "post1", authorId = "user_alex"),
-            samplePost(title = "Found Keys", username = "maria_d", location = "Central Library", isLost = false, postId = "post2", authorId = "user_maria")
-        )
+    val isRefreshing by appViewModel.isRefreshing.collectAsState()
+    val pullRefreshState = rememberPullRefreshState(isRefreshing, { appViewModel.loadAllPosts(true) })
+    val context = LocalContext.current
+    val unreadNotificationCount by appViewModel.unreadNotificationCount.collectAsState()
+
+    LaunchedEffect(Unit) {
+        appViewModel.loadUserProfile()
+        appViewModel.claimEvents.collect { event ->
+            when (event) {
+                is ClaimEvent.Success -> Toast.makeText(context, event.message, Toast.LENGTH_SHORT).show()
+                is ClaimEvent.Error -> Toast.makeText(context, event.message, Toast.LENGTH_LONG).show()
+            }
+        }
     }
 
     // Observe internal nav backstack to decide which bottom item should appear selected
@@ -84,23 +73,27 @@ fun HomeScreen(navController: NavController, appNavController: NavController) {
         currentDestination == "conversations" -> "chat"
         currentDestination?.startsWith("chat") == true -> "chat"
         currentDestination == "profile" -> "profile"
-        currentDestination == "manage_active_claims" -> "notifications"
+        currentDestination == "my_activity" -> "my_activity"
+        // When on notifications screen, keep Home selected since bottom tab was removed
+        currentDestination == "manage_active_claims" -> "home"
         else -> "home"
     }
 
     Scaffold(
         containerColor = OffWhite,
         topBar = {
-            androidx.compose.material3.CenterAlignedTopAppBar(
+            CenterAlignedTopAppBar(
                 title = { Text(text = "Explore", color = TextBlack) },
-                colors = androidx.compose.material3.TopAppBarDefaults.centerAlignedTopAppBarColors(
+                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
                     containerColor = OffWhite,
                     scrolledContainerColor = OffWhite,
                     titleContentColor = TextBlack
                 ),
                 actions = {
-                    IconButton(onClick = { navController.navigate("manage_active_claims") }) {
-                        Icon(imageVector = Icons.Filled.Notifications, contentDescription = "Notifications", tint = ElectricPink)
+                    BadgedBox(badge = { if (unreadNotificationCount > 0) Badge { Text("$unreadNotificationCount") } }) {
+                        IconButton(onClick = { navController.navigate("my_activity") }) {
+                            Icon(imageVector = Icons.Filled.Notifications, contentDescription = "Notifications", tint = ElectricPink)
+                        }
                     }
                 }
             )
@@ -111,7 +104,7 @@ fun HomeScreen(navController: NavController, appNavController: NavController) {
                     "home" -> navController.navigate("home")
                     "chat" -> navController.navigate("conversations")
                     "add" -> appNavController.navigate("create_post")
-                    "notifications" -> navController.navigate("manage_active_claims")
+                    "my_activity" -> navController.navigate("my_activity")
                     "profile" -> navController.navigate("profile")
                 }
             })
@@ -129,39 +122,22 @@ fun HomeScreen(navController: NavController, appNavController: NavController) {
             Spacer(modifier = Modifier.height(16.dp))
             TabsSection(selectedTab = selectedTab, onTabSelected = { selectedTab = it })
             Spacer(modifier = Modifier.height(16.dp))
-            // Wrap feed in PullToRefreshBox
-            val isRefreshing = postFeedState is com.fyp.losty.PostFeedState.Loading
-            PullToRefreshBox(
-                isRefreshing = isRefreshing,
-                modifier = Modifier.fillMaxSize()
-            ) {
+
+            Box(Modifier.pullRefresh(pullRefreshState)) {
                 LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
                     verticalArrangement = Arrangement.spacedBy(16.dp),
                     contentPadding = PaddingValues(bottom = 80.dp)
                 ) {
                     val selectedType = if (selectedTab == 0) "LOST" else "FOUND"
-                    val itemsToShow: List<HomePost> = if (postFeedState is com.fyp.losty.PostFeedState.Success) {
-                        val filtered = (postFeedState as com.fyp.losty.PostFeedState.Success).posts.filter { it.type.equals(selectedType, ignoreCase = false) }
-                        filtered.map { p ->
-                            HomePost(
-                                title = p.title,
-                                username = p.authorName,
-                                location = p.location,
-                                likes = 0,
-                                caption = p.description,
-                                timestamp = "",
-                                isLost = p.type == "LOST",
-                                postId = p.id,
-                                authorId = p.authorId,
-                                imageUrl = p.imageUrls.firstOrNull() ?: ""
-                            )
+                    if (postFeedState is PostFeedState.Success) {
+                        val filtered = (postFeedState as PostFeedState.Success).posts.filter { it.type.equals(selectedType, ignoreCase = false) }
+                        items(filtered) { post ->
+                            PostCard(post = post, navController = navController, appViewModel = appViewModel)
                         }
-                    } else samplePosts
-
-                    items(itemsToShow) { post: HomePost ->
-                        PostCard(post = post, navController = navController)
                     }
                 }
+                PullRefreshIndicator(isRefreshing, pullRefreshState, Modifier.align(Alignment.TopCenter))
             }
         }
     }
@@ -190,7 +166,13 @@ private fun SearchSection() {
         value = "",
         onValueChange = {},
         leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null, tint = ElectricPink) },
-        trailingIcon = { Icon(Icons.Filled.MoreVert, contentDescription = "Filter", tint = ElectricPink) },
+        trailingIcon = {
+            Icon(
+                painter = painterResource(id = R.drawable.outline_filter_alt_24),
+                contentDescription = "Filter",
+                tint = ElectricPink
+            )
+        },
         placeholder = { Text("Search items, locations...") },
         modifier = Modifier.fillMaxWidth(),
         singleLine = true
@@ -199,95 +181,58 @@ private fun SearchSection() {
 
 @Composable
 private fun TabsSection(selectedTab: Int, onTabSelected: (Int) -> Unit) {
-    val lostColor = UrgentRed
-    val foundColor = SafetyTeal
-
-    TabRow(
-        selectedTabIndex = selectedTab,
-        containerColor = OffWhite
-    ) {
-        Tab(
-            selected = selectedTab == 0,
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        val lostSelected = selectedTab == 0
+        val foundSelected = selectedTab == 1
+        Button(
             onClick = { onTabSelected(0) },
-            selectedContentColor = lostColor,
-            unselectedContentColor = TextBlack,
-            text = { Text("Lost Items", fontWeight = FontWeight.Bold) }
-        )
-        Tab(
-            selected = selectedTab == 1,
+            modifier = Modifier.weight(1f),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = if (lostSelected) UrgentRed else Color(0xFFF0F0F0),
+                contentColor = if (lostSelected) Color.White else TextGrey
+            )
+        ) {
+            Text("Lost Items", fontWeight = FontWeight.Bold)
+        }
+        Button(
             onClick = { onTabSelected(1) },
-            selectedContentColor = foundColor,
-            unselectedContentColor = TextBlack,
-            text = { Text("Found Items", fontWeight = FontWeight.Bold) }
-        )
-    }
-    // Simple colored underline to mimic indicator color per selected tab
-    Row(modifier = Modifier.fillMaxWidth().height(2.dp)) {
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxHeight()
-                .background(if (selectedTab == 0) lostColor else Color.Transparent)
-        )
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxHeight()
-                .background(if (selectedTab == 1) foundColor else Color.Transparent)
-        )
+            modifier = Modifier.weight(1f),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = if (foundSelected) SafetyTeal else Color(0xFFF0F0F0),
+                contentColor = if (foundSelected) Color.White else TextGrey
+            )
+        ) {
+            Text("Found Items", fontWeight = FontWeight.Bold)
+        }
     }
 }
 
-private data class HomePost(
-    val title: String,
-    val username: String,
-    val location: String,
-    val likes: Int,
-    val caption: String,
-    val timestamp: String,
-    val isLost: Boolean,
-    val postId: String,
-    val authorId: String,
-    val imageUrl: String
-)
-
-private fun samplePost(
-    title: String,
-    username: String,
-    location: String,
-    likes: Int = 124,
-    caption: String = "Need this back ASAP",
-    timestamp: String = "2h ago",
-    isLost: Boolean = true,
-    postId: String = "",
-    authorId: String = "",
-    imageUrl: String = "https://picsum.photos/400"
-) = HomePost(title, username, location, likes, caption, timestamp, isLost, postId, authorId, imageUrl)
-
 @Composable
-private fun PostCard(post: HomePost, navController: NavController) {
-    val appViewModel: AppViewModel = viewModel()
-    val context = androidx.compose.ui.platform.LocalContext.current
+private fun PostCard(post: Post, navController: NavController, appViewModel: AppViewModel) {
+    val context = LocalContext.current
     var creatingConversation by remember { mutableStateOf(false) }
-    var liked by remember(post.postId) { mutableStateOf(false) }
-    var likeCount by remember(post.postId) { mutableStateOf(post.likes) }
+    val userProfile by appViewModel.userProfile.collectAsState()
+    val bookmarks by appViewModel.bookmarks.collectAsState()
 
     Card(
         shape = RoundedCornerShape(16.dp),
         modifier = Modifier.fillMaxWidth(),
-        colors = androidx.compose.material3.CardDefaults.cardColors(containerColor = Color.White)
+        colors = CardDefaults.cardColors(containerColor = Color.White)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
+                AsyncImage(
+                    model = post.authorImageUrl,
+                    contentDescription = "Author Image",
                     modifier = Modifier
                         .size(48.dp)
                         .clip(CircleShape)
-                        .background(Color.LightGray)
+                        .background(Color.LightGray),
+                    contentScale = ContentScale.Crop
                 )
                 Spacer(modifier = Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(text = post.username, color = TextBlack, fontWeight = FontWeight.Bold)
+                    Text(text = post.authorName, color = TextBlack, fontWeight = FontWeight.Bold)
                     Text(text = post.location, color = TextGrey, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 IconButton(onClick = {}) {
@@ -302,7 +247,7 @@ private fun PostCard(post: HomePost, navController: NavController) {
                     .clip(RoundedCornerShape(12.dp))
             ) {
                 AsyncImage(
-                    model = post.imageUrl,
+                    model = post.imageUrls.firstOrNull(),
                     contentDescription = post.title,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize()
@@ -312,43 +257,40 @@ private fun PostCard(post: HomePost, navController: NavController) {
                         .align(Alignment.TopEnd)
                         .padding(12.dp)
                         .clip(RoundedCornerShape(12.dp))
-                        .background(UrgentRed)
+                        .background(if (post.type == "LOST") UrgentRed else SafetyTeal)
                         .padding(horizontal = 12.dp, vertical = 4.dp)
                 ) {
-                    Text(text = if (post.isLost) "LOST" else "FOUND", color = Color.White, fontWeight = FontWeight.Bold)
+                    Text(text = post.type, color = Color.White, fontWeight = FontWeight.Bold)
                 }
             }
             Spacer(modifier = Modifier.height(12.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = {
-                    liked = !liked
-                    likeCount = if (liked) likeCount + 1 else (likeCount - 1).coerceAtLeast(0)
-                }) {
-                    Icon(Icons.Filled.Favorite, contentDescription = if (liked) "Unlike" else "Like", tint = if (liked) ElectricPink else TextGrey)
+                IconButton(onClick = { /* TODO: Implement likes */ }) {
+                    Icon(Icons.Filled.Favorite, contentDescription = "Like", tint = TextGrey)
                 }
                 IconButton(onClick = {
                     if (creatingConversation) return@IconButton
-                    if (post.postId.isNotBlank() && post.authorId.isNotBlank()) {
+                    if (post.id.isNotBlank() && post.authorId.isNotBlank()) {
                         creatingConversation = true
                         appViewModel.getOrCreateConversation(
-                            postId = post.postId,
+                            postId = post.id,
                             postTitle = post.title,
-                            postImageUrl = post.imageUrl,
+                            postImageUrl = post.imageUrls.firstOrNull() ?: "",
                             postOwnerId = post.authorId,
-                            postOwnerName = post.username
+                            postOwnerName = post.authorName
                         ) { result ->
                             creatingConversation = false
                             if (result.isSuccess) {
                                 val conversationId = result.getOrNull() ?: run {
                                     Toast.makeText(context, "Failed to open conversation", Toast.LENGTH_SHORT).show(); return@getOrCreateConversation
                                 }
-                                navController.navigate("chat/$conversationId")
+                                val encodedName = java.net.URLEncoder.encode(post.authorName, "utf-8")
+                                navController.navigate("chat/$conversationId?otherUserName=$encodedName")
                             } else {
                                 Toast.makeText(context, result.exceptionOrNull()?.message ?: "Could not open conversation", Toast.LENGTH_LONG).show()
                             }
                         }
                     } else {
-                        // fallback to conversations list
                         navController.navigate("conversations")
                     }
                 }) {
@@ -362,13 +304,27 @@ private fun PostCard(post: HomePost, navController: NavController) {
                     Icon(Icons.Filled.Share, contentDescription = "Share", tint = TextGrey)
                 }
                 Spacer(modifier = Modifier.weight(1f))
-                IconButton(onClick = {}) {
-                    Icon(Icons.Filled.BookmarkBorder, contentDescription = "Bookmark", tint = TextGrey)
+
+                if (post.type == "LOST" && post.authorId != userProfile.uid) {
+                    Button(
+                        onClick = { appViewModel.createClaim(post) },
+                        colors = ButtonDefaults.buttonColors(containerColor = SafetyTeal)
+                    ) {
+                        Text("Claim", color = Color.White)
+                    }
+                } else {
+                    val isBookmarked = bookmarks.contains(post.id)
+                    IconButton(onClick = { appViewModel.toggleBookmark(post) }) {
+                        Icon(
+                            imageVector = if (isBookmarked) Icons.Filled.Bookmark else Icons.Filled.BookmarkBorder,
+                            contentDescription = "Bookmark",
+                            tint = if (isBookmarked) ElectricPink else TextGrey
+                        )
+                    }
                 }
             }
-            Text(text = "$likeCount likes", color = TextBlack, fontWeight = FontWeight.Bold)
-            BuildCaption(post.username, post.caption)
-            Text(text = post.timestamp, color = TextGrey, style = MaterialTheme.typography.bodySmall)
+            BuildCaption(post.authorName, post.description)
+            Text(text = "", color = TextGrey, style = MaterialTheme.typography.bodySmall) // Timestamp removed for now
         }
     }
 }
@@ -381,42 +337,3 @@ private fun BuildCaption(username: String, caption: String) {
         Text(text = caption, color = TextBlack)
     }
 }
-
-@Composable
-private fun BottomNavigationBar(selectedRoute: String, onItemSelected: (String) -> Unit) {
-    val items = listOf(
-        BottomNavItem("home", Icons.Filled.Home, "Home"),
-        BottomNavItem("chat", Icons.AutoMirrored.Filled.Chat, "Chat"),
-        BottomNavItem("add", Icons.Outlined.Add, "Add"),
-        BottomNavItem("notifications", Icons.Filled.Notifications, "Notifications"),
-        BottomNavItem("profile", Icons.Filled.Person, "Profile")
-    )
-
-    NavigationBar(containerColor = Color.White) {
-        items.forEach { item ->
-            val isSelected = item.route == selectedRoute
-            val iconScale by animateFloatAsState(targetValue = if (isSelected) 1.18f else 1f, animationSpec = tween(durationMillis = 200))
-            NavigationBarItem(
-                selected = isSelected,
-                onClick = { onItemSelected(item.route) },
-                icon = {
-                    Icon(
-                        imageVector = item.icon,
-                        contentDescription = item.label,
-                        tint = ElectricPink,
-                        modifier = Modifier.graphicsLayer(scaleX = iconScale, scaleY = iconScale)
-                    )
-                },
-                label = {
-                    Text(
-                        text = item.label,
-                        color = if (isSelected) ElectricPink else TextBlack
-                    )
-                },
-                alwaysShowLabel = true
-            )
-        }
-    }
-}
-
-private data class BottomNavItem(val route: String, val icon: ImageVector, val label: String)

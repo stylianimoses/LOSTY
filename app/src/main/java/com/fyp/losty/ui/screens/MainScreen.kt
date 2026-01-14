@@ -6,6 +6,8 @@ import androidx.navigation.NavController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
+import androidx.navigation.NavType
 
 @Composable
 fun MainScreen(appNavController: NavController) {
@@ -23,13 +25,21 @@ fun MainScreen(appNavController: NavController) {
             )
         }
         composable("conversations") { ConversationsScreen(navController = navController) }
-        composable("chat/{conversationId}") { backStackEntry ->
+
+        // Chat route with optional query parameter 'otherUserName'
+        composable(
+            route = "chat/{conversationId}?otherUserName={otherUserName}",
+            arguments = listOf(
+                navArgument("conversationId") { type = NavType.StringType },
+                navArgument("otherUserName") { type = NavType.StringType; nullable = true }
+            )
+        ) { backStackEntry ->
             val conversationId = backStackEntry.arguments?.getString("conversationId") ?: ""
-            ChatScreen(conversationId = conversationId, navController = navController)
+            val otherNameArg = backStackEntry.arguments?.getString("otherUserName")?.takeIf { it.isNotBlank() }
+            ChatScreen(conversationId = conversationId, navController = navController, otherUserNameArg = otherNameArg)
         }
-        composable("manage_own_posts") { ManageOwnPostsScreen(appNavController = appNavController) }
-        composable("manage_active_claims") { ManageActiveClaimsScreen(navController = navController) }
-        composable("manage_post_claims") { ManagePostClaimsScreen() }
-        composable("profile") { ProfileScreen(navController = navController, appNavController = appNavController) }
+
+        composable("my_activity") { MyActivityScreen(navController = navController, appNavController = appNavController) }
+        composable("profile") { ProfileScreen(navController = navController, onSignOut = { appNavController.navigate("login") { popUpTo(0) } }) }
     }
 }

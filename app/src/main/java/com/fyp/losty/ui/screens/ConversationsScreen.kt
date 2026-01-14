@@ -50,10 +50,10 @@ fun ConversationsScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
+            CenterAlignedTopAppBar(
                 title = { Text(text = "Messages", fontWeight = FontWeight.Bold, color = TextBlack) },
                 navigationIcon = { BackToHomeButton(navController = navController) },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = OffWhite)
+                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = OffWhite)
             )
         },
         containerColor = OffWhite

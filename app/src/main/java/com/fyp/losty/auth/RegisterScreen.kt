@@ -1,11 +1,14 @@
 package com.fyp.losty.auth
 
-import android.app.Activity
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.util.Log
 import android.util.Patterns
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
@@ -40,54 +43,58 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import androidx.navigation.compose.rememberNavController
 import coil.compose.AsyncImage
-import coil.request.ImageRequest
+import com.fyp.losty.AppViewModel
 import com.fyp.losty.R
+import com.fyp.losty.AuthState
+
+// Credential Manager Imports
+import androidx.credentials.CredentialManager
+import androidx.credentials.CustomCredential
+import androidx.credentials.GetCredentialRequest
+import androidx.credentials.exceptions.GetCredentialException
+import com.google.android.libraries.identity.googleid.GetGoogleIdOption
+import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
+import com.google.android.libraries.identity.googleid.GoogleIdTokenParsingException
+import kotlinx.coroutines.launch
 
 private val PrimaryBlue = Color(0xFF349BEB)
 private val DisabledGray = Color(0xFFDCE9F8)
 
 @Composable
-fun RegisterScreen(navController: NavController, authViewModel: AuthViewModel = viewModel()) {
-    var contact by remember { mutableStateOf("") } // mobile or email
+fun RegisterScreen(navController: NavController, appViewModel: AppViewModel = viewModel()) {
+    var email by remember { mutableStateOf("") }
     var fullName by remember { mutableStateOf("") }
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var passwordVisible by remember { mutableStateOf(false) }
-    var profileImageUri by remember { mutableStateOf<Uri?>(null) }
-    var otpCode by remember { mutableStateOf("") }
+    var selectedImageUri by remember { mutableStateOf<Uri?>(null) }
 
     val context = LocalContext.current
-    val activity = context as? Activity
-
-    val authState by authViewModel.authState.collectAsState()
-    val verificationId by authViewModel.verificationId.collectAsState()
+    val authState by appViewModel.authState.collectAsState()
     var submitted by remember { mutableStateOf(false) }
+    val coroutineScope = rememberCoroutineScope()
 
-    // Image picker launcher
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
-        if (uri != null) profileImageUri = uri
-    }
+    // Initialize Credential Manager
+    val credentialManager = remember { CredentialManager.create(context) }
 
-    // Validation
-    val isContactEmail = Patterns.EMAIL_ADDRESS.matcher(contact).matches()
-    val isContactPhone = contact.isNotBlank() && contact.length >= 10
-    val isContactValid = isContactEmail || isContactPhone
+    val photoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia(),
+        onResult = { uri -> selectedImageUri = uri }
+    )
+
+    val isEmailValid = Patterns.EMAIL_ADDRESS.matcher(email).matches()
     val isPasswordValid = password.length >= 8
-    val isFormComplete = isContactValid && fullName.isNotBlank() && username.isNotBlank() && isPasswordValid
+    val isFormComplete = isEmailValid && fullName.isNotBlank() && username.isNotBlank() && isPasswordValid
 
-    // React to auth state changes: on success navigate to main; on error show toast
     LaunchedEffect(authState) {
         when (authState) {
             is AuthState.Success -> {
                 Log.i("RegisterScreen", "AuthState.Success detected, navigating to main")
-                Toast.makeText(context, "Registration successful", Toast.LENGTH_SHORT).show()
-                // Navigate to main and clear backstack so user can't go back to auth screens
-                navController.navigate("main") {
-                    popUpTo(navController.graph.startDestinationId) { inclusive = true }
+                Toast.makeText(context, "Registration successful! Please check your email for verification.", Toast.LENGTH_LONG).show()
+                navController.navigate("main_graph") {
+                    popUpTo("auth_graph") { inclusive = true }
                     launchSingleTop = true
                 }
-                // Reset auth state in ViewModel to avoid repeated navigation from stale state
-                authViewModel.resetState()
                 submitted = false
             }
             is AuthState.Error -> {
@@ -100,7 +107,6 @@ fun RegisterScreen(navController: NavController, authViewModel: AuthViewModel = 
         }
     }
 
-    // Registration UI
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -125,18 +131,58 @@ fun RegisterScreen(navController: NavController, authViewModel: AuthViewModel = 
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(text = "LOSTY", fontSize = 36.sp, fontWeight = FontWeight.Bold)
-
                     Spacer(modifier = Modifier.height(18.dp))
 
-                    // Keep a top social button similar to login
+                    // --- GOOGLE SIGN-IN BUTTON ---
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(48.dp)
                             .testTag("social_button")
-                            .clickable {
-                                // Placeholder: show a toast for now
-                                Toast.makeText(context, "Social sign-up placeholder", Toast.LENGTH_SHORT).show()
+                            .clickable(enabled = authState !is AuthState.Loading) {
+                                coroutineScope.launch {
+                                    // Network Check using the imported classes
+                                    val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+                                    val isConnected = cm.activeNetwork?.let {
+                                        cm.getNetworkCapabilities(it)?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                                    } ?: false
+
+                                    if (!isConnected) {
+                                        Toast.makeText(context, "No internet connection.", Toast.LENGTH_SHORT).show()
+                                        return@launch
+                                    }
+
+                                    try {
+                                        val googleIdOption = GetGoogleIdOption.Builder()
+                                            .setFilterByAuthorizedAccounts(false)
+                                            .setServerClientId(context.getString(R.string.default_web_client_id))
+                                            .setAutoSelectEnabled(true)
+                                            .build()
+
+                                        val request = GetCredentialRequest.Builder()
+                                            .addCredentialOption(googleIdOption)
+                                            .build()
+
+                                        val result = credentialManager.getCredential(context, request)
+                                        val credential = result.credential
+
+                                        if (credential is CustomCredential && credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+                                            try {
+                                                val googleIdToken = GoogleIdTokenCredential.createFrom(credential.data)
+                                                appViewModel.signInWithGoogle(googleIdToken.idToken)
+                                            } catch (e: GoogleIdTokenParsingException) {
+                                                Toast.makeText(context, "Parsing error: ${e.message}", Toast.LENGTH_LONG).show()
+                                            }
+                                        } else {
+                                            Toast.makeText(context, "Unexpected credential type.", Toast.LENGTH_SHORT).show()
+                                        }
+                                    } catch (e: GetCredentialException) {
+                                        Log.e("RegisterScreen", "Sign In failed: ${e.message}")
+                                        if (!e.message.toString().contains("User cancelled")) {
+                                            Toast.makeText(context, "Sign In Error: ${e.message}", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                }
                             }
                             .background(PrimaryBlue, shape = RoundedCornerShape(8.dp))
                             .padding(horizontal = 12.dp),
@@ -152,67 +198,57 @@ fun RegisterScreen(navController: NavController, authViewModel: AuthViewModel = 
                     }
 
                     Spacer(modifier = Modifier.height(16.dp))
-
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         HorizontalDivider(modifier = Modifier.weight(1f))
                         Text("  OR  ", style = MaterialTheme.typography.bodyLarge, color = Color.Gray)
                         HorizontalDivider(modifier = Modifier.weight(1f))
                     }
-
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    // Profile image picker aligned to the top of fields
-                    Box(modifier = Modifier.size(96.dp), contentAlignment = Alignment.BottomEnd) {
-                        if (profileImageUri != null) {
+                    Box(
+                        modifier = Modifier
+                            .size(96.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                            .clickable { photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
+                            .testTag("profile_image_picker"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (selectedImageUri != null) {
                             AsyncImage(
-                                model = ImageRequest.Builder(context).data(profileImageUri).crossfade(true).build(),
-                                contentDescription = "Profile image",
-                                modifier = Modifier
-                                    .size(96.dp)
-                                    .clip(CircleShape),
+                                model = selectedImageUri,
+                                contentDescription = "Profile Picture",
+                                modifier = Modifier.fillMaxSize(),
                                 contentScale = ContentScale.Crop
                             )
                         } else {
-                            Box(
-                                modifier = Modifier
-                                    .size(96.dp)
-                                    .clip(CircleShape)
-                                    .background(MaterialTheme.colorScheme.surfaceVariant),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(Icons.Default.CameraAlt, contentDescription = "Pick image")
-                            }
+                            Icon(
+                                imageVector = Icons.Default.CameraAlt,
+                                contentDescription = "Add profile picture",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(40.dp)
+                            )
                         }
-
-                        Icon(
-                            imageVector = Icons.Default.CameraAlt,
-                            contentDescription = "Pick image",
-                            modifier = Modifier
-                                .size(28.dp)
-                                .offset((-6).dp, (-6).dp)
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.primary)
-                                .clickable { picker.launch("image/*") }
-                                .padding(6.dp),
-                            tint = Color.White
-                        )
                     }
 
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(16.dp))
 
-                    // Fields in the exact order from the screenshot
                     OutlinedTextField(
-                        value = contact,
-                        onValueChange = { contact = it },
-                        placeholder = { Text("Mobile Number or Email") },
+                        value = email,
+                        onValueChange = { email = it },
+                        placeholder = { Text("Email") },
                         singleLine = true,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("contact_field"),
+                        modifier = Modifier.fillMaxWidth().testTag("contact_field"),
                         shape = RoundedCornerShape(8.dp),
-                        isError = contact.isNotEmpty() && !isContactValid
+                        isError = email.isNotEmpty() && !isEmailValid,
+                        supportingText = { 
+                            if (email.isNotEmpty() && !isEmailValid) {
+                                Text("A verification link will be sent to this email.")
+                            } else {
+                                Text(" ")
+                            }
+                        }
                     )
-
                     Spacer(modifier = Modifier.height(8.dp))
 
                     OutlinedTextField(
@@ -222,9 +258,15 @@ fun RegisterScreen(navController: NavController, authViewModel: AuthViewModel = 
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(8.dp),
-                        isError = fullName.isNotBlank() && fullName.length < 2
+                        isError = fullName.isNotBlank() && fullName.length < 2,
+                        supportingText = { 
+                            if (fullName.isNotBlank() && fullName.length < 2) {
+                                Text("Full name must be at least 2 characters.")
+                            } else {
+                                Text(" ")
+                            }
+                        }
                     )
-
                     Spacer(modifier = Modifier.height(8.dp))
 
                     OutlinedTextField(
@@ -234,9 +276,15 @@ fun RegisterScreen(navController: NavController, authViewModel: AuthViewModel = 
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(8.dp),
-                        isError = username.isNotBlank() && username.length < 3
+                        isError = username.isNotBlank() && username.length < 3,
+                        supportingText = { 
+                            if (username.isNotBlank() && username.length < 3) {
+                                Text("Username must be at least 3 characters.")
+                            } else {
+                                Text(" ")
+                            }
+                        }
                     )
-
                     Spacer(modifier = Modifier.height(8.dp))
 
                     OutlinedTextField(
@@ -253,116 +301,48 @@ fun RegisterScreen(navController: NavController, authViewModel: AuthViewModel = 
                                 Icon(imageVector = icon, contentDescription = "Toggle password visibility")
                             }
                         },
-                        isError = password.isNotBlank() && !isPasswordValid
+                        isError = password.isNotBlank() && !isPasswordValid,
+                        supportingText = { 
+                            if (password.isNotEmpty() && !isPasswordValid) {
+                                Text("Password must be at least 8 characters")
+                            } else {
+                                Text(" ")
+                            }
+                        }
                     )
 
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    // If the contact is a phone number, either show Send OTP or OTP input/verify depending on verificationId
-                    if (isContactPhone) {
-                        if (verificationId == null) {
-                            // show Send OTP button (changed to directly register without OTP)
-                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-                                Button(
-                                    onClick = {
-                                        if (activity == null) {
-                                            Toast.makeText(context, "Unable to register (no Activity)", Toast.LENGTH_SHORT).show()
-                                        } else {
-                                            // Register immediately without OTP: create a synthetic email from phone so
-                                            // the existing email/password registration flow in ViewModel can run.
-                                            // Note: this is a development shortcut — consider using proper phone
-                                            // verification or linking in production.
-                                            val syntheticEmail = "${'$'}contact@losty.local"
-                                            Log.i("RegisterScreen", "Register (phone) clicked: fullName=${fullName}, phone=${contact}")
-                                            submitted = true
-                                            authViewModel.verifyOtpAndRegister(
-                                                 fullName = fullName,
-                                                 email = syntheticEmail,
-                                                 phoneNumber = contact,
-                                                 password = password,
-                                                 otpCode = "",
-                                                 profileImageUri = profileImageUri
-                                             )
-                                        }
-                                    },
-                                    enabled = contact.isNotBlank() && authState !is AuthState.Loading && !submitted,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(48.dp),
-                                    shape = RoundedCornerShape(12.dp)
-                                ) {
-                                    Text("Sign up")
-                                }
-                            }
-                        } else {
-                            Column(modifier = Modifier.fillMaxWidth()) {
-                                OutlinedTextField(
-                                    value = otpCode,
-                                    onValueChange = { otpCode = it },
-                                    placeholder = { Text("Enter OTP") },
-                                    singleLine = true,
-                                    modifier = Modifier.fillMaxWidth(),
-                                    shape = RoundedCornerShape(8.dp)
-                                )
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Button(
-                                    onClick = {
-                                        // Verify OTP and register (ViewModel handles flow)
-                                        Log.i("RegisterScreen", "Verify & Register clicked: fullName=${fullName}, phone=${contact}, otp=${otpCode}")
-                                        submitted = true
-                                        authViewModel.verifyOtpAndRegister(
-                                             fullName = fullName,
-                                             email = if (isContactEmail) contact else "",
-                                             phoneNumber = contact,
-                                             password = password,
-                                             otpCode = otpCode,
-                                             profileImageUri = profileImageUri
-                                         )
-                                    },
-                                    enabled = otpCode.length >= 4 && authState !is AuthState.Loading && !submitted,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(48.dp),
-                                    shape = RoundedCornerShape(12.dp)
-                                ) {
-                                    Text("Verify & Register")
-                                }
-                            }
-                        }
-                    } else {
-                        // contact is email or empty — show regular Sign up button
-                        Button(
-                            onClick = {
-                                if (!isContactValid) Toast.makeText(context, "Enter a valid contact (phone or email)", Toast.LENGTH_SHORT).show()
-                                else if (!isPasswordValid) Toast.makeText(context, "Password must be at least 8 characters", Toast.LENGTH_SHORT).show()
-                                else {
-                                    Log.i("RegisterScreen", "Sign up (email) clicked: fullName=${fullName}, email=${contact}")
-                                    submitted = true
-                                    authViewModel.verifyOtpAndRegister(
-                                         fullName = fullName,
-                                         email = contact,
-                                         phoneNumber = "",
-                                         password = password,
-                                         otpCode = "",
-                                         profileImageUri = profileImageUri
-                                     )
-                                }
-                            },
-                            enabled = isFormComplete && authState !is AuthState.Loading && !submitted,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(48.dp),
-                            shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = if (isFormComplete) PrimaryBlue else DisabledGray)
-                        ) {
-                            Text(text = "Sign up", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Color.White)
-                        }
+                    Button(
+                        onClick = {
+                            Log.i("RegisterScreen", "Sign up clicked: fullName=$fullName, email=$email")
+                            submitted = true
+                            appViewModel.registerUser(
+                                email = email,
+                                fullName = fullName,
+                                username = username,
+                                password = password,
+                                imageUri = selectedImageUri
+                            )
+                        },
+                        enabled = isFormComplete && authState !is AuthState.Loading && !submitted,
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = if (isFormComplete) PrimaryBlue else DisabledGray)
+                    ) {
+                        Text(text = "Sign Up", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Color.White)
                     }
                 }
 
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-                    Text(text = "Have an account? ")
-                    Text(text = "Log in", color = MaterialTheme.colorScheme.primary, modifier = Modifier.clickable { navController.navigate("login") })
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Have an account? ")
+                    TextButton(onClick = { navController.navigate("login") }) {
+                        Text("Log In")
+                    }
                 }
             }
         }
